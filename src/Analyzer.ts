@@ -9,15 +9,21 @@ type MultiType = MultiTypeAtomic | MultiTypeArray | MultiTypeRecord
 
 type MultiTypeDefinition = MultiType[]
 
-type MultiTypeAtomic = 'undefined' | 'string' | 'number' | 'boolean'
+type MultiTypeAtomic = {
+    type: 'undefined' | 'string' | 'number' | 'boolean'
+}
 
 type MultiTypeArray = {
+    type: 'array'
     items: MultiTypeDefinition
 }
 
 interface MultiTypeRecord {
+    type: 'record'
     properties: Record<string, MultiTypeDefinition>
 }
+
+type AnalyzeResults = Record<string, MultiTypeDefinition>
 
 
 export default class Analyzer {
@@ -42,8 +48,13 @@ export default class Analyzer {
         this.payloadsPerTopic.get(packet.topic).push(payload)
     }
 
+    analyzeAndGenerateTypescriptTypes(convertTopicToPrefix: (topic: string)=>string){
+        return this.generateTypescriptTypes(convertTopicToPrefix, this.analyzePackets())
+    }
 
-    analyzePackets(){
+    private analyzePackets(){
+        const result: AnalyzeResults = {}
+
         for(const entry of this.payloadsPerTopic){
             const topic = entry[0]
 
@@ -51,82 +62,102 @@ export default class Analyzer {
 
             const typeDefinition = this.getTypeDefinition(payloads)
 
-            console.log(topic, JSON.stringify(typeDefinition, null, 4))
+            result[topic] = typeDefinition
+        }
+
+        return result
+    }
+
+    private generateTypescriptTypes(convertTopicToPrefix: (topic: string)=>string, analyzeResults: AnalyzeResults){
+        let str = ''
+
+        for(const topic of Object.keys(analyzeResults)){
+            const result = analyzeResults[topic]
+
+            const prefix = convertTopicToPrefix(topic)
+
+            str += `export type ${prefix}_Type = ${this.makeTypescriptType(result)}\n\n`
+        }
+
+        return str
+    }
+
+    private makeTypescriptType(typeDefinition: MultiTypeDefinition | MultiType, indent?: string): string{
+
+        if(typeof indent !== 'string'){
+            indent = ''
+        }
+
+        if(typeDefinition instanceof Array){
+            if(typeDefinition.length === 1){
+                return this.makeTypescriptType(typeDefinition[0], indent)
+            } else {
+                return indent + typeDefinition.map(m => this.makeTypescriptType(m, indent + '  ')).join(' | ')
+            }
+        } else {
+            switch(typeDefinition.type){
+                case 'undefined':
+                case 'boolean':
+                case 'string':
+                case 'number':
+                    return indent + typeDefinition.type
+
+
+                case 'array':
+                    return this.makeTypescriptType(typeDefinition.items, indent) + '[]'
+
+                case 'record':
+                    let str = indent + '{\n'
+
+                    for(const key of Object.keys(typeDefinition.properties)){
+                        const s = this.makeTypescriptType(typeDefinition.properties[key], indent + '  ')
+                        str += indent + '  ' + (key.match(/^\d.+$/) ? `"${key}"` : key) + ': ' + s.trim() + '\n'
+                    }
+
+                    return str + indent + '}'
+            }
         }
     }
 
-    private tuneTypeDefinitionWithType(typeDefinition: MultiTypeDefinition, type: MultiType){
+    private tuneTypeDefinition(typeDefinition: MultiTypeDefinition, additionalTypeDefinition: MultiType){
 
-        if(type === 'undefined' || type === 'string' || type === 'number' || type === 'boolean'){
-            if(!typeDefinition.includes(type)){
-                typeDefinition.push(type)
-            }
 
-            return
-        }
+        let typeAlreadyExists = false
 
-        if(typeof type === 'object'){
-            if((type as MultiTypeArray).items){
+        for(const type of typeDefinition){
+            if(type.type === additionalTypeDefinition.type){
+                typeAlreadyExists = true
 
-                type = (type as MultiTypeArray)
+                // tune types array and record (others can not be tuned)
 
-                let possibleTypeArrayExists = false
-                for(const existingPossibleType of typeDefinition){
-                    if(typeof existingPossibleType === 'object' && (existingPossibleType as MultiTypeArray).items){
-                        possibleTypeArrayExists = true
+                if(additionalTypeDefinition.type === 'array'){
 
-                        this.tuneTypeDefinitionWithType((existingPossibleType as MultiTypeArray).items, type)
-                        break
-                    }
+                    this.tuneTypeDefinitionWithMultiple((type as MultiTypeArray).items, additionalTypeDefinition.items)
                 }
 
-                if(!possibleTypeArrayExists){
-                    typeDefinition.push(type)
-                }
+                if(additionalTypeDefinition.type === 'record'){
 
-                return
-            } else {// Record<string: any>
-
-                type = (type as MultiTypeRecord)
-
-                let possibleTypeRecordExists = false
-                for(let existingPossibleType of typeDefinition){
-                    if(typeof existingPossibleType === 'object' && (existingPossibleType as MultiTypeRecord).properties){
-                        possibleTypeRecordExists = true
-
-                        existingPossibleType = (existingPossibleType as MultiTypeRecord)
-
-                        for(const key of Object.keys(type.properties)){
-                            if(!existingPossibleType.properties[key]){
-                                existingPossibleType.properties[key] = type.properties[key]
-                            } else {
-                                for(const t of type.properties[key]){
-                                    this.tuneTypeDefinitionWithType(existingPossibleType.properties[key], t)
-                                }
-                            }
+                    for(const key of Object.keys(additionalTypeDefinition.properties)){
+                        if(!(type as MultiTypeRecord).properties[key]){
+                            (type as MultiTypeRecord).properties[key] = additionalTypeDefinition.properties[key]
+                        } else {
+                            this.tuneTypeDefinitionWithMultiple((type as MultiTypeRecord).properties[key], additionalTypeDefinition.properties[key])
                         }
-
-                        break
                     }
                 }
 
-                if(!possibleTypeRecordExists){
-                    typeDefinition.push(type)
-                }
-
-                return
             }
         }
 
 
-        throw new Error('unsupported type: ' + type)
+        if(!typeAlreadyExists){
+            typeDefinition.push(additionalTypeDefinition)
+        }
     }
 
-    private tuneTypeDefinitionWithData(typeDefinition: MultiTypeDefinition, data: any){
-        const typeOfData = this.getTypeDefinition(data)
-
-        for(const t of typeOfData){
-            this.tuneTypeDefinitionWithType(typeDefinition, t)
+    private tuneTypeDefinitionWithMultiple(typeDefinition: MultiTypeDefinition, additionalTypeDefinitions: MultiType[]){
+        for(const a of additionalTypeDefinitions){
+            this.tuneTypeDefinition(typeDefinition, a)
         }
     }
 
@@ -138,26 +169,29 @@ export default class Analyzer {
             case 'undefined':
             case 'string':
             case 'number':
-            case 'boolean': return [typeOfData]
+            case 'boolean': return [{type: typeOfData}]
 
             case 'object': {
                 if(data instanceof Array){
                     const possibleTypes: MultiTypeDefinition = []
 
+
                     for(const d of data){
                         const type = this.getTypeDefinition(d)
 
                         for(const t of type){
-                            this.tuneTypeDefinitionWithType(possibleTypes, t)
+                            this.tuneTypeDefinition(possibleTypes, t)
                         }
                     }
 
                     return [{
+                        type: 'array',
                         items: possibleTypes
                     }]
 
                 } else {// Key:Value Object
                     const ret: MultiTypeRecord = {
+                        type: 'record',
                         properties: {}
                     }
 
