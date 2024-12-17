@@ -12,15 +12,27 @@ if(!fs.existsSync(LOG_DIR)){
 
 const analyzer = new Analyzer()
 
-
 recursivelyReadDir(LOG_DIR)
 
+const KNOWN_SERIAL_NUMBERS: Record<string, string> = {
+    '5YSZM73003KX5Z': 'DJI RC Pro Enterprise',
+    '1581F5FJC246300E82TU': 'Mavic 3 T'
+}
+
 const typescriptTypes = analyzer.analyzeAndGenerateTypescriptTypes(topic => {
-    const topicMatch = topic.match(/^([^\/]+\/product\/)[^/]+\/(.*)$/)
 
-    const eventName = topicMatch[1] + topicMatch[2]
+    const topicMatch = topic.match(/^([^\/]+\/product\/)([^/]+)\/(.*)$/)
 
-    return eventName.replace(/\//g, '_')
+    const eventName = topicMatch[1] + topicMatch[3]
+    const serialNumber = topicMatch[2]
+
+    let suffix = ''
+
+    if(KNOWN_SERIAL_NUMBERS[serialNumber]){
+        suffix += KNOWN_SERIAL_NUMBERS[serialNumber]
+    }
+
+    return (eventName + (suffix.length > 0 ? '_' + suffix : '')).replace(/[^a-zA-Z0-9_]/g, '_')
 })
 
 if(fs.existsSync(OUTPUT_FILE)){
