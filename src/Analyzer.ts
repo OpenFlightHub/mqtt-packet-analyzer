@@ -26,6 +26,8 @@ interface MultiTypeRecord {
 type AnalyzeResults = Record<string, {packetCount: number, definition: MultiTypeDefinition}>
 
 
+const TAB = '    '
+
 export default class Analyzer {
 
 
@@ -132,7 +134,7 @@ export default class Analyzer {
                 if(hasCommonType && typeDefinition.length > 10){
                     return commonType
                 } else {
-                    return indent + (isWrappedWithArray ? '(' : '') + typeDefinition.map(m => this.makeTypescriptType(m, indent + '  ').trim()).join(' | ') + (isWrappedWithArray ? ')' : '')
+                    return indent + (isWrappedWithArray ? '(' : '') + typeDefinition.map(m => this.makeTypescriptType(m, indent + TAB).trim()).join(' | ') + (isWrappedWithArray ? ')' : '')
                 }
             }
         } else {
@@ -147,10 +149,10 @@ export default class Analyzer {
                 let str = indent + '{\n'
 
                 for(const key of Object.keys((typeDefinition as MultiTypeRecord).properties)){
-                    const s = this.makeTypescriptType((typeDefinition as MultiTypeRecord).properties[key], indent + '  ')
+                    const s = this.makeTypescriptType((typeDefinition as MultiTypeRecord).properties[key], indent + TAB)
 
                     const encapsulateWithLiterals = key.substring(0, 1).match(/^\d$/) || key.match(/[^a-zA-Z0-9_]/)
-                    str += indent + '  ' + (encapsulateWithLiterals ? `"${key}"` : key) + ': ' + s.trim() + '\n'
+                    str += indent + TAB + (encapsulateWithLiterals ? `"${key}"` : key) + ': ' + s.trim() + '\n'
                 }
 
                 return str + indent + '}'
